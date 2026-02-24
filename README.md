@@ -25,6 +25,39 @@ This design handles several edge cases:
 
 Documentation references are added as comments within the codebase for better maintainability.
 
+
+## Requirements
+
+- Docker
+- Docker Compose
+
+## Installation and Setup
+
+1. Ensure Docker and Docker Compose are installed on your system.
+
+2. Clone the repository or navigate to the project directory.
+
+3. Run the following command to start the application:
+
+   ```bash
+   docker compose up
+   ```
+
+   This will build the necessary images and start the services.
+
+**Note**: Due to an issue with Alembic migrations, if you need to run `docker compose up` again after stopping the services, first run:
+
+```bash
+docker compose down
+```
+
+Then, run `docker compose up` again.
+
+## Usage
+
+Once the application is running, you can interact with the API endpoints to perform chat operations.
+
+
 ### API Endpoints
 
 - **Health Check**: `GET / or api/v1/health` - Check the health of the application.

@@ -5,6 +5,9 @@ class Message(BaseModel):
     role: str
     content: str
 
+class AssistantMessage(Message):
+    role: str = "assistant"
+
 class SystemMessage(Message):
     role: str = "system"
 

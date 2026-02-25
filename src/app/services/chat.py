@@ -3,19 +3,20 @@ from collections.abc import Coroutine
 from datetime import datetime, UTC, timedelta
 import json
 import re
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, List, Literal
 from uuid import UUID
 import redis.asyncio as aioredis
 import structlog
 from ..core.llm.utils import completion_call, extract_chunk_text, extract_usage
+from ..core.llm.schemas import UserMessage, AssistantMessage, Message
 from ..models import Chat, ChatThread
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..schemas.chat import ChatRequest, ChatStatus
 from ..core.utils.cache import buffer_key, get_status, set_status, status_key
 from litellm.types.utils import ModelResponse
 from ..core.config import settings
-from sqlalchemy import update, select
-
+from sqlalchemy import update, select, asc, desc
+from ..core.db.database import local_session
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +30,8 @@ async def save_chat(
     
     try:
         async with db.begin():
+            thread_id = chat_request.thread_id
+
             if not chat_request.thread_id:
                 thread = ChatThread(
                     thread_title=chat_request.user_prompt[:100],
@@ -72,8 +75,40 @@ async def save_chat(
         return chat
 
     except Exception as e:
-        logger.error("save_chat failed", error=str(e))
+        logger.exception("save_chat failed", error=str(e))
         raise
+
+
+async def get_chats_for_thread(
+        thread_id: int,
+        db: AsyncSession,
+        order: Literal["asc", "desc"] = "asc",
+    ) -> List[Chat]:
+    try:
+        order_func = desc if order == "desc" else asc
+        rows = (
+            await db.execute(
+                select(Chat)
+                .where(
+                    Chat.thread_id == thread_id,
+                    Chat.is_deleted == False
+                )
+                .order_by(order_func(Chat.created_at))
+            )
+        ).scalars().all()
+
+        return rows
+    except Exception:
+        logger.exception("Getting chats for a thread failed.")
+
+
+def format_previous_messages(chats: list[Chat]) -> list[Message]:
+    messages = []
+    for chat in chats: 
+        messages.append(UserMessage(content=chat.user_prompt))
+        if chat.llm_response:
+            messages.append(AssistantMessage(content=chat.llm_response))
+    return messages
 
 
 # Producer 
@@ -81,10 +116,10 @@ async def producer(
     queue: asyncio.Queue,
     db: AsyncSession,
     redis: aioredis.Redis,
-    chat: Chat,                    
+    chat: Chat,   
+    previous_messages: list[Message],                 
     chat_request: ChatRequest,
 ) -> None:
-
     redis_buf: list[str] = []
     db_buf: list[str] = []
     all_chunks: list[str] = [] 
@@ -162,12 +197,14 @@ async def producer(
             row = result.scalar_one_or_none()
             return row == ChatStatus.INTERRUPTED.value
 
- 
+    
     try:
+
         stream = await completion_call(
             model=chat_request.model,
             user_prompt=chat_request.user_prompt,
             system_prompt=chat_request.system_prompt,
+            previous_messages=previous_messages,
             stream=True,
         )
 
@@ -277,7 +314,7 @@ async def stream_generator(
     chat_uuid_str: str = str(chat.uuid)
     # Send chat UUID as the SSE event id immediately so the client can
     # use it as Last-Event-ID for reconnection. 
-    yield f"id: {chat_uuid_str}\nevent: init\ndata: {json.dumps({'chat_uuid': chat_uuid_str})}\nretry: {settings.SSE_RECONNECTION_DELAY_MS}\n\n"
+    yield f"id: {chat_uuid_str}\nevent: init\ndata: {json.dumps({'chat_uuid': chat_uuid_str, 'thread_id': chat.thread_id})}\nretry: {settings.SSE_RECONNECTION_DELAY_MS}\n\n"
     chunk_idx = 0
     try:
         while True:
@@ -315,7 +352,7 @@ async def stream_generator(
 async def reconnect_stream(
     redis: aioredis.Redis,
     db: AsyncSession,
-    chat_uuid: str,
+    chat: Chat,
     last_event_id: int,
 ) -> AsyncGenerator[str, None]:
     """
@@ -328,9 +365,11 @@ async def reconnect_stream(
         remaining = deadline - now()
     If remaining <= 0 the window has already passed — emit failed and exit.
     """
+    chat_uuid = str(chat.uuid)
+    thread_id = chat.thread_id
     yield (
         f"id: {chat_uuid}\nevent: init\n"
-        f"data: {json.dumps({'chat_uuid': chat_uuid, 'reconnected': True})}\n\n"
+        f"data: {json.dumps({'chat_uuid': chat_uuid, 'thread_id': thread_id, 'reconnected': True})}\n\n"
     )
     chat = await db.execute(
             select(Chat.status, Chat.created_at).where(Chat.uuid == UUID(chat_uuid))

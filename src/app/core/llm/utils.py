@@ -25,6 +25,7 @@ async def completion_call(
     model: str,
     user_prompt: str,
     system_prompt: str | None = None,
+    previous_messages: List[Message] | None = None,
     stream: bool = False,
     mock: bool = False,
 ) -> object | None:
@@ -51,7 +52,8 @@ async def completion_call(
             # enables token usage details in last chunk of the streaming response.
             kws.setdefault("stream_options", {})["include_usage"] = True
 
-        messages: List[Message] = []
+        # copy previous messages if any
+        messages: List[Message] = [*previous_messages]
 
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))

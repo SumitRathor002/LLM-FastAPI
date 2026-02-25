@@ -14,13 +14,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from ...schemas.chat import (
     ChatRequest,
+    ChatResponse,
     StopRequest,
     ChatStatus
 )
 from ...models.chat import (
     Chat
 )
-from ...services.chat import producer, reconnect_stream, save_chat, stream_generator 
+from ...services.chat import format_previous_messages, get_chats_for_thread, producer, reconnect_stream, save_chat, stream_generator 
 from ...core.llm.utils import completion_call, extract_usage
 logger = structlog.get_logger(__name__)
 
@@ -43,27 +44,34 @@ async def start_chat(
             last_event_id = 0
         # either has continue from begining or chat index, that last event id
         chat_uuid = str(body.chat_uuid)
-        row = (await db.execute(
+        chat = (await db.execute(
             select(Chat).where(Chat.uuid == UUID(chat_uuid))
         )).scalar_one_or_none()
-        if not row:
+        if not chat:
             raise HTTPException(status_code=404, detail="No such chat found") 
         
-        logger.debug(f"reconnection chat status: {row.status}")
-        if row.status == ChatStatus.ACTIVE:
+        logger.debug(f"reconnection chat status: {chat.status}")
+        if chat.status == ChatStatus.ACTIVE:
             # Producer still running — replay buffer then poll for new data.
             return StreamingResponse(
-                reconnect_stream(redis, db, chat_uuid, last_event_id),
+                reconnect_stream(redis, db, chat, last_event_id),
                 media_type="text/event-stream",
             )
 
-        return JSONResponse({"text": row.llm_response, "status": row.status})
-                        
+        return JSONResponse({"text": chat.llm_response, "status": chat.status})
+
+    previous_messages = []
+    if body.thread_id:
+        previous_chats = await get_chats_for_thread(thread_id=body.thread_id, db=db)
+        previous_messages = format_previous_messages(chats=previous_chats) # 
+        await db.rollback()  # closes the read transaction, so we do not get any error in save_chat, nothing to commit
+
     if not body.stream:
         response = await completion_call(
             model=model_id,
             user_prompt=body.user_prompt,
             system_prompt=body.system_prompt,
+            previous_messages=previous_messages
         )
         if response is None:
             raise HTTPException(status_code=502, detail="LLM call failed.")
@@ -103,6 +111,7 @@ async def start_chat(
         db = db,
         redis=redis,
         chat=chat,
+        previous_messages=previous_messages,
         chat_request=body
     ))
     stream_gen = stream_generator(
@@ -140,3 +149,12 @@ async def stop_chat(
         await db.commit()
 
     return {"detail": "Chat interrupted.", "chat_uuid": chat_uuid_str}
+
+
+@router.get("/chats/{thread_id}", response_model=list[ChatResponse], status_code=200)
+async def list_chats_by_thread(
+    thread_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+):
+    chats = await get_chats_for_thread(thread_id, db)
+    return chats 

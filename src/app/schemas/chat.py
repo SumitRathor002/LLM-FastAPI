@@ -1,7 +1,16 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import Self
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, field_serializer, model_validator
 from uuid import UUID
+
+
+class ChatStatus(StrEnum):
+    INTERRUPTED = "interrupted"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 
 class ChatRequest(BaseModel):
     model: str | None = None
@@ -34,8 +43,20 @@ class StopRequest(BaseModel):
     chat_uuid: str
 
 
-class ChatStatus(StrEnum):
-    INTERRUPTED = "interrupted"
-    ACTIVE = "active"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class ChatResponse(BaseModel):
+    chat_uuid: UUID = Field(alias="uuid")
+    user_prompt: str
+    response: str = Field(alias="llm_response")  
+    status: str
+    model: str
+    provider: str
+    thread_id: int
+    created_at: datetime
+
+    @field_serializer("chat_uuid")
+    def serialize_uuid(self, value: UUID) -> str:
+        return str(value)
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True,
+    }

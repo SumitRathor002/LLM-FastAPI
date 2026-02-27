@@ -25,6 +25,11 @@ This design handles several edge cases:
 
 Documentation references are added as comments within the codebase for better maintainability.
 
+## Architecture Diagram
+
+![Architecture Diagram](assets/Architecture.png)
+
+Figure: High-level architecture diagram showing the producer/consumer flow and persistence layer.
 
 ## Requirements
 

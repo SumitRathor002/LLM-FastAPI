@@ -26,6 +26,7 @@ async def save_chat(
         status: ChatStatus, 
         chat_request: ChatRequest, 
         llm_response: ModelResponse | None | str = None,
+        tool_calls: list[dict] | None = None, 
     ):  
     
     try:
@@ -61,6 +62,7 @@ async def save_chat(
                 role="assistant",
                 thread_id=thread_id,
                 complete_response=llm_response.model_dump() if hasattr(llm_response, "model_dump") else None,
+                tool_calls=tool_calls, 
             )
             chat.total_tokens = usage.get("total_tokens")
             chat.input_tokens = usage.get("input_tokens")

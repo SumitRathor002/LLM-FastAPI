@@ -9,7 +9,8 @@ wheels/
 
 # Virtual environments
 .venv
-.dump.py
+dump.py
 .env
 
 **/.env
+

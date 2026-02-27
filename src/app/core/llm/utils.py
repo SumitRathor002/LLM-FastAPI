@@ -11,7 +11,7 @@ from litellm import (
     get_model_info
 )
 from litellm.utils import get_provider_info
-from .schemas import SystemMessage, UserMessage, Message
+from .schemas import SystemMessage, ToolDef, UserMessage, Message
 from ..config import settings
 import structlog
 from faker import Faker
@@ -26,6 +26,7 @@ async def completion_call(
     user_prompt: str,
     system_prompt: str | None = None,
     previous_messages: List[Message] | None = None,
+    tools: Optional[List[ToolDef]]=None,
     stream: bool = False,
     mock: bool = False,
 ) -> object | None:
@@ -60,15 +61,17 @@ async def completion_call(
 
         messages.append(UserMessage(content=user_prompt))
 
-        serialized = [msg.model_dump() for msg in messages]
+        serialized_msg = [msg.model_dump(exclude_none=True) for msg in messages]
+        serialized_tools = [tool.model_dump(exclude_none=True) for tool in tools] if tools else None
 
         # refer for schema
         # https://docs.litellm.ai/docs/#streaming-response-format-openai-format
         # https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events
         response = await acompletion(
             model=model,
-            messages=serialized,
+            messages=serialized_msg,
             stream=stream,
+            tools=serialized_tools,
             **kws,
         )
         logger.debug("LLM response received", response=response)

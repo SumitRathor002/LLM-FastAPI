@@ -1,5 +1,6 @@
-
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+from typing import Dict, Any, List, Optional, Literal, Union
+from typing_extensions import Annotated
 
 class Message(BaseModel):
     role: str
@@ -13,6 +14,100 @@ class SystemMessage(Message):
 
 class UserMessage(Message):
     role: str = "user"
+
+
+
+
+class BasePropertySchema(BaseModel):
+    description: Optional[str] = None
+
+class StringProperty(BasePropertySchema):
+    type: Literal["string"]
+    enum: Optional[List[str]] = None
+
+class NumberProperty(BasePropertySchema):
+    type: Literal["number", "integer"]
+
+class BooleanProperty(BasePropertySchema):
+    type: Literal["boolean"]
+
+class NullProperty(BasePropertySchema):
+    type: Literal["null"]
+
+
+# Forward references for recursive types
+class ArrayProperty(BasePropertySchema):
+    type: Literal["array"]
+    items: Optional["PropertySchema"] = None  # recursive
+
+    @model_validator(mode="after")
+    def check_items(self):
+        if self.items is None:
+            raise ValueError("'array' type must define 'items'")
+        return self
+
+
+class ObjectProperty(BasePropertySchema):
+    type: Literal["object"]
+    properties: Optional[Dict[str, "PropertySchema"]] = None  # recursive
+    required: Optional[List[str]] = None
+    additionalProperties: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def check_required_fields_exist(self):
+        if self.required and self.properties:
+            missing = [r for r in self.required if r not in self.properties]
+            if missing:
+                raise ValueError(
+                    f"'required' lists fields not in 'properties': {missing}"
+                )
+        return self
+
+
+# Union of all property types — discriminated by 'type'
+PropertySchema = Annotated[
+    Union[
+        ObjectProperty,
+        ArrayProperty,
+        StringProperty,
+        NumberProperty,
+        BooleanProperty,
+        NullProperty,
+    ],
+    "PropertySchema"
+]
+
+# Rebuild models to resolve forward references
+ArrayProperty.model_rebuild()
+ObjectProperty.model_rebuild()
+
+
+class FunctionParameters(BaseModel):
+    type: Literal["object"]
+    properties: Dict[str, PropertySchema]
+    required: Optional[List[str]] = None
+    additionalProperties: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def check_required_fields_exist(self):
+        if self.required:
+            missing = [r for r in self.required if r not in self.properties]
+            if missing:
+                raise ValueError(
+                    f"'required' lists fields not in 'properties': {missing}"
+                )
+        return self
+
+class FunctionDef(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: FunctionParameters
+
+
+class ToolDef(BaseModel):
+    type: Literal["function"] = "function"
+    function: FunctionDef
+
 
 # Native to LiteLLM /  OpenAI
 # refer: https://docs.litellm.ai/docs/completion/input#input-params-1

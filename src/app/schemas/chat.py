@@ -1,8 +1,10 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import List, Optional, Self
 from pydantic import BaseModel, Field, field_serializer, model_validator
 from uuid import UUID
+
+from ..core.llm.schemas import ToolDef
 
 
 class ChatStatus(StrEnum):
@@ -17,6 +19,7 @@ class ChatRequest(BaseModel):
     provider: str | None = None
     user_prompt: str | None = None
     system_prompt: str | None = None
+    tools: Optional[List[ToolDef]] = None
     stream: bool = True
     thread_id: int | None = None
     chat_uuid: UUID | None = None

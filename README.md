@@ -62,8 +62,9 @@ Then, run `docker compose up` again.
 
 Once the application is running, you can interact with the API endpoints to perform chat operations.
 
+## [API Documentation](https://documenter.getpostman.com/view/28991503/2sBXcHhyjt)
 
-### API Endpoints
+### API Endpoints Examples
 
 - **Health Check**: `GET / or api/v1/health` - Check the health of the application.
 - **Chat**: `POST /api/v1/chat` - Initiate a chat session with an LLM provider.

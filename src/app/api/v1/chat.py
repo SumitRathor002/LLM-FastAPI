@@ -23,6 +23,7 @@ from ...models.chat import (
 )
 from ...services.chat import format_previous_messages, get_chats_for_thread, producer, reconnect_stream, save_chat, stream_generator 
 from ...core.llm.utils import completion_call, extract_usage
+
 logger = structlog.get_logger(__name__)
 
 
@@ -66,29 +67,50 @@ async def start_chat(
         previous_messages = format_previous_messages(chats=previous_chats) # 
         await db.rollback()  # closes the read transaction, so we do not get any error in save_chat, nothing to commit
 
-    if not body.stream:
+    if body.tools or not body.stream:
         response = await completion_call(
             model=model_id,
             user_prompt=body.user_prompt,
             system_prompt=body.system_prompt,
+            tools=body.tools,
             previous_messages=previous_messages
         )
         if response is None:
             raise HTTPException(status_code=502, detail="LLM call failed.")
 
-        text  = response.choices[0].message.content
-        usage = extract_usage(response)
+        message = response.choices[0].message
+        usage   = extract_usage(response)
+
+        tool_calls = None
+        if message.tool_calls:
+            tool_calls = [
+                {
+                    "id":       tc.id,
+                    "type":     tc.type,
+                    "function": {
+                        "name":      tc.function.name,
+                        "arguments": tc.function.arguments,  # raw JSON string
+                    }
+                }
+                for tc in message.tool_calls
+            ]
+
+        text = message.content or ""  # content is None during tool calls
+
         chat = await save_chat(
             db=db,
             status=ChatStatus.COMPLETED,
-            llm_response=response, 
-            chat_request=body
+            llm_response=response,
+            chat_request=body,
+            tool_calls=tool_calls,       # ← pass it in
         )
+
         return JSONResponse({
-            "chat_uuid": str(chat.uuid),
-            "text": text,
-            "usage": usage,
-            "thread_id": chat.thread_id,
+            "chat_uuid":  str(chat.uuid),
+            "text":       text,
+            "tool_calls": tool_calls,    # ← return to client too
+            "usage":      usage,
+            "thread_id":  chat.thread_id,
         })
     
     
